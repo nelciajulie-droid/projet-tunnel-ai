@@ -6,6 +6,60 @@ import { getConsistentMachineId } from "@/shared/utils/machineId";
 
 const CLI_TOKEN_SALT = "fr-cli-auth";
 
+// ─── In-process API dispatch (serverless-friendly model test) ───────────────
+// The model test historically self-called http://127.0.0.1:$PORT/api/v1/*.
+// That works on any long-running host, but serverless runtimes (Vercel) never
+// listen on a local port, so every test would fail there. When running on such
+// a runtime (or when FLAGSHIPROUTER_INPROCESS_TEST=1), invoke the same route
+// handlers directly in-process instead of going through HTTP.
+const INPROCESS_ENABLED =
+  process.env.FLAGSHIPROUTER_INPROCESS_TEST === "1" || process.env.VERCEL === "1";
+
+let translatorsReady = false;
+async function ensureTranslatorsInProcess() {
+  if (translatorsReady) return;
+  const { initTranslators } = await import("open-sse/translator/index.js");
+  await initTranslators();
+  translatorsReady = true;
+}
+
+async function loadInProcessHandler(pathname) {
+  switch (pathname) {
+    case "/api/v1/chat/completions":
+      await ensureTranslatorsInProcess();
+      return (await import("@/sse/handlers/chat.js")).handleChat;
+    case "/api/v1/embeddings":
+      return (await import("@/sse/handlers/embeddings.js")).handleEmbeddings;
+    case "/api/v1/images/generations":
+      return (await import("@/sse/handlers/imageGeneration.js")).handleImageGeneration;
+    case "/api/v1/audio/transcriptions":
+      return (await import("@/sse/handlers/stt.js")).handleStt;
+    case "/api/v1/systemone":
+      return (await import("@/sse/handlers/systemone.js")).handleSystemone;
+    default:
+      return null;
+  }
+}
+
+async function internalApiFetch(pathname, init) {
+  if (INPROCESS_ENABLED) {
+    try {
+      const handler = await loadInProcessHandler(pathname);
+      if (handler) {
+        return await handler(new Request(`http://internal${pathname}`, init));
+      }
+    } catch (err) {
+      return {
+        ok: false,
+        status: 0,
+        text: async () => JSON.stringify({ error: err?.message || "in-process test failed" }),
+      };
+    }
+  }
+  const baseUrl = `http://127.0.0.1:${process.env.PORT || UPDATER_CONFIG.appPort}`;
+  return fetch(`${baseUrl}${pathname}`, init);
+}
+
 function createSilentWavFile() {
   const sampleRate = 16000;
   const channels = 1;
@@ -57,7 +111,7 @@ export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:$
   const start = Date.now();
 
   if (kind === "embedding") {
-    const res = await fetch(`${baseUrl}/api/v1/embeddings`, {
+    const res = await internalApiFetch("/api/v1/embeddings", {
       method: "POST",
       headers,
       body: JSON.stringify({ model, input: "test" }),
@@ -80,7 +134,7 @@ export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:$
   }
 
   if (kind === "image") {
-    const res = await fetch(`${baseUrl}/api/v1/images/generations`, {
+    const res = await internalApiFetch("/api/v1/images/generations", {
       method: "POST",
       headers,
       body: JSON.stringify({ model, prompt: "test" }),
@@ -109,7 +163,7 @@ export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:$
     form.append("file", sampleAudio, "test.wav");
     form.append("model", model);
 
-    const res = await fetch(`${baseUrl}/api/v1/audio/transcriptions`, {
+    const res = await internalApiFetch("/api/v1/audio/transcriptions", {
       method: "POST",
       headers: Object.fromEntries(Object.entries(headers).filter(([key]) => key.toLowerCase() !== "content-type")),
       body: form,
@@ -133,7 +187,7 @@ export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:$
   }
 
   if (kind === "systemone") {
-    const res = await fetch(`${baseUrl}/api/v1/systemone`, {
+    const res = await internalApiFetch("/api/v1/systemone", {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -162,7 +216,7 @@ export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:$
     return { ok: true, latencyMs, error: null, status: res.status };
   }
 
-  const res = await fetch(`${baseUrl}/api/v1/chat/completions`, {
+  const res = await internalApiFetch("/api/v1/chat/completions", {
     method: "POST",
     headers,
     body: JSON.stringify({

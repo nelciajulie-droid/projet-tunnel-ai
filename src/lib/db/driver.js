@@ -1,4 +1,7 @@
+import { randomUUID as _cryptoRandomUUID } from "node:crypto";
 import { ensureDirs, DATA_FILE } from "./paths.js";
+
+const crypto = { randomUUID: _cryptoRandomUUID };
 
 // Use global to survive Next.js dev hot-reload (module state resets on reload)
 if (!global._dbAdapter) global._dbAdapter = { instance: null, initPromise: null, logged: false };
@@ -74,7 +77,32 @@ async function initAdapter() {
 
   const { runMigrationOnce } = await import("./migrate.js");
   await runMigrationOnce(adapter);
+  await seedApiKeyFromEnv(adapter);
   return adapter;
+}
+
+// On ephemeral/serverless hosts (e.g. Vercel) each instance starts with a fresh
+// database, so keys created in the dashboard die with the instance. When
+// FLAGSHIPROUTER_SEED_API_KEY is set, make sure that exact key exists and is
+// active on EVERY instance — idempotent, runs once per adapter init.
+async function seedApiKeyFromEnv(adapter) {
+  const seedKey = process.env.FLAGSHIPROUTER_SEED_API_KEY;
+  if (!seedKey) return;
+  try {
+    const row = adapter.get(`SELECT id, isActive FROM apiKeys WHERE key = ?`, [seedKey]);
+    if (!row) {
+      adapter.run(
+        `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt) VALUES(?, ?, ?, ?, ?, ?)`,
+        [crypto.randomUUID(), seedKey, "env-seed", null, 1, new Date().toISOString()]
+      );
+      console.log("[DB] Seeded API key from FLAGSHIPROUTER_SEED_API_KEY");
+    } else if (!(row.isActive === 1 || row.isActive === true)) {
+      adapter.run(`UPDATE apiKeys SET isActive = 1 WHERE key = ?`, [seedKey]);
+      console.log("[DB] Re-activated seeded API key from FLAGSHIPROUTER_SEED_API_KEY");
+    }
+  } catch (e) {
+    console.warn(`[DB] FLAGSHIPROUTER_SEED_API_KEY seed skipped: ${e.message}`);
+  }
 }
 
 export async function getAdapter() {

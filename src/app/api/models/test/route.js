@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { pingModelByKind } from "./ping";
 
+// Self-calling test can take longer than the serverless default budget,
+// especially on cold starts behind free upstream providers.
+export const maxDuration = 60;
+
 // POST /api/models/test - Ping a single model via internal completions or embeddings
 export async function POST(request) {
   try {

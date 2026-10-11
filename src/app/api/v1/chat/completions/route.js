@@ -1,6 +1,10 @@
 import { handleChat } from "@/sse/handlers/chat.js";
 import { initTranslators } from "open-sse/translator/index.js";
 
+// Free upstream providers can be slow on cold starts; give the completion
+// enough budget on serverless hosts.
+export const maxDuration = 60;
+
 let initialized = false;
 
 /**
