@@ -59,7 +59,7 @@ function KindTag({ children }) {
   );
 }
 
-function ModelRow({ model, provider, copied, onCopy, test, onTest }) {
+function ModelRow({ model, provider, upstream, copied, onCopy, test, onTest }) {
   const isRename = model.source === "rename";
   const providerHref = `/dashboard/providers/${model.providerId}`;
 
@@ -98,6 +98,15 @@ function ModelRow({ model, provider, copied, onCopy, test, onTest }) {
             {copied === model.id ? "check" : "content_copy"}
           </span>
         </button>
+        {isRename && model.target && (
+          <p
+            title="Public model → real upstream route"
+            className="mt-1 inline-flex max-w-full items-center gap-1 font-mono text-[11px] text-text-subtle"
+          >
+            <span className="material-symbols-outlined text-[13px] opacity-70">alt_route</span>
+            <span className="truncate">→ {model.target}</span>
+          </p>
+        )}
       </div>
 
       {/* Provider */}
@@ -106,7 +115,9 @@ function ModelRow({ model, provider, copied, onCopy, test, onTest }) {
           <BrandMark className="size-[26px] shrink-0" />
           <div className="min-w-0">
             <p className="truncate text-[13px] font-medium text-text-main">{BRAND.name}</p>
-            <p className="truncate text-[11px] text-text-subtle">via {BRAND.name}</p>
+            <p className="truncate text-[11px] text-text-subtle">
+              routes to {upstream?.name || model.target?.split("/")[0] || "upstream"}
+            </p>
           </div>
         </div>
       ) : (
@@ -243,21 +254,34 @@ export default function ModelsPage() {
       if (kind !== "all" && m.kind !== kind) return false;
       if (status === "ready" && !m.ready) return false;
       if (status === "connect" && m.ready) return false;
-      // Renamed models present as the router's own, so they never surface under an upstream provider.
+      // Renames present as the router's own in the unfiltered list, but they also surface
+      // under their real upstream provider when that provider is selected.
       const isRename = m.source === "rename";
-      if (providerFilter !== "all" && (isRename || m.providerId !== providerFilter)) return false;
+      const filterMatch = isRename
+        ? m.target?.split("/")[0] === providerFilter ||
+          m.target?.split("/")[0] === providersById[providerFilter]?.alias
+        : m.providerId === providerFilter;
+      if (providerFilter !== "all" && !filterMatch) return false;
       if (!q) return true;
+      const targetProviderName = isRename ? providersById[m.target?.split("/")[0]]?.name : null;
       const providerName = isRename ? BRAND.name : providersById[m.providerId]?.name;
-      return [m.name, m.id, providerName].some((v) => String(v || "").toLowerCase().includes(q));
+      return [m.name, m.id, providerName, m.target, targetProviderName].some((v) =>
+        String(v || "").toLowerCase().includes(q),
+      );
     });
   }, [sorted, kind, status, providerFilter, query, providersById]);
 
-  const providerOptions = useMemo(
-    () => (catalog?.providers || [])
-      .filter((p) => p.models > 0)
-      .sort((a, b) => a.name.localeCompare(b.name)),
-    [catalog],
-  );
+  const providerOptions = useMemo(() => {
+    // Filter counts include public renames under their real upstream provider.
+    const byId = new Map((catalog?.providers || []).map((p) => [p.id, { ...p, models: p.models }]));
+    for (const m of catalog?.models || []) {
+      if (m.source !== "rename" || !m.target) continue;
+      const alias = m.target.split("/")[0];
+      const target = byId.get(alias) || [...byId.values()].find((p) => p.alias === alias);
+      if (target) target.models += 1;
+    }
+    return [...byId.values()].filter((p) => p.models > 0).sort((a, b) => a.name.localeCompare(b.name));
+  }, [catalog]);
 
   const handleTest = useCallback(async (model) => {
     setTests((prev) => ({ ...prev, [model.id]: { state: "running" } }));
@@ -369,6 +393,7 @@ export default function ModelsPage() {
                 key={model.id}
                 model={model}
                 provider={providersById[model.providerId]}
+                upstream={providersById[model.target?.split("/")[0]]}
                 copied={copied}
                 onCopy={copy}
                 test={tests[model.id]}

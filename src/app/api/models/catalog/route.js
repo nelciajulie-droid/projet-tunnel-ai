@@ -153,6 +153,8 @@ export async function GET() {
       const alias = entry.alias || entry.id;
       const ready = !!entry.noAuth || (connectedByProvider.get(entry.id) || 0) > 0;
       // The upstream provider stays server-side; renamed models present as the router's own.
+      // `target` is the real upstream route — this endpoint is admin-session-only, and the
+      // dashboard shows it so the owner can see where each public model actually goes.
       renamed.push({
         id: rename.id,
         name: rename.name,
@@ -163,6 +165,7 @@ export async function GET() {
         caps: capsFor(alias, rename.model, "llm"),
         source: "rename",
         ready,
+        target: rename.target,
       });
     }
 
