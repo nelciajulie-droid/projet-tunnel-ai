@@ -27,6 +27,7 @@ export default {
     thinkingFormat: "openai",
   },
   models: [
+    { id: "@cf/openai/gpt-oss-120b", name: "GPT-OSS 120B" },
     { id: "@cf/meta/llama-3.2-1b-instruct", name: "Llama 3.2 1B Instruct" },
     { id: "@cf/meta/llama-3.2-3b-instruct", name: "Llama 3.2 3B Instruct" },
     { id: "@cf/meta/llama-3.1-8b-instruct-fp8-fast", name: "Llama 3.1 8B Instruct FP8 Fast" },
