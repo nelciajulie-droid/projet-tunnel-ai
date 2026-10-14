@@ -217,6 +217,24 @@ export async function runMigrationOnce(adapter) {
   if (_migratedAdapters.has(adapter)) return;
   _migratedAdapters.add(adapter);
 
+  // Remote-store fast path: every statement is an HTTP round trip, so skip the
+  // full per-table sync when the schema is already durable in the cloud store.
+  // Marker is version-stamped — a SCHEMA_VERSION bump automatically re-triggers
+  // the full sync. Falls through to the normal path on any doubt.
+  const isRemoteStore = typeof adapter.driver === "string" && adapter.driver.startsWith("remote-http");
+  if (isRemoteStore) {
+    try {
+      adapter.exec(buildCreateTableSql("_meta", TABLES._meta));
+      const remoteSchemaVer = parseInt(getMetaSync(adapter, "schemaVersion", "0"), 10) || 0;
+      const syncedMarker = getMetaSync(adapter, "remoteSchemaSynced", null);
+      if (remoteSchemaVer >= latestVersion() && syncedMarker === String(SCHEMA_VERSION)) {
+        return; // schema already synced in the remote store — nothing to do
+      }
+    } catch (e) {
+      console.warn(`[DB][migrate] remote fast-path check failed (full sync will run): ${e.message}`);
+    }
+  }
+
   // Capture freshness BEFORE migrations stamp _meta (otherwise we'd misclassify
   // a brand-new DB as non-fresh once schemaVersion is written).
   const fresh = isFreshDb(adapter);
@@ -248,6 +266,11 @@ export async function runMigrationOnce(adapter) {
 
   // 2. Additive sync (auto add missing columns/indexes declared in TABLES)
   syncSchemaFromTables(adapter);
+
+  // Stamp the sync marker for the remote-store fast path (cheap cold boots).
+  if (isRemoteStore) {
+    try { setMetaSync(adapter, "remoteSchemaSynced", String(SCHEMA_VERSION)); } catch {}
+  }
 
   // Stamp the schema version we just reached so future boots skip re-backup.
   setMetaSync(adapter, "backupSchemaVersion", SCHEMA_VERSION);

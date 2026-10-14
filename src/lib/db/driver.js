@@ -59,19 +59,41 @@ async function trySqlJs() {
   }
 }
 
+async function tryRemoteHttp() {
+  // Durable remote store (Cloudflare Worker + D1) — selected FIRST when
+  // FLAGSHIPROUTER_REMOTE_STORE_URL is set. Required on serverless hosts
+  // (e.g. Vercel) where the local file system is ephemeral: keys, provider
+  // connections, settings and usage written to /tmp die with every instance.
+  const url = process.env.FLAGSHIPROUTER_REMOTE_STORE_URL;
+  if (!url) return null;
+  try {
+    const { createRemoteHttpAdapter } = await import("./adapters/remoteHttpAdapter.js");
+    return await createRemoteHttpAdapter({
+      url,
+      token: process.env.FLAGSHIPROUTER_REMOTE_STORE_TOKEN || "",
+      timeoutMs: Number(process.env.FLAGSHIPROUTER_REMOTE_STORE_TIMEOUT_MS || 9000),
+    });
+  } catch (e) {
+    console.warn(`[DB] remote store unavailable: ${e.message}`);
+    return null;
+  }
+}
+
 async function initAdapter() {
   ensureDirs();
   // Order per runtime:
+  //   Remote (env): remote-http → (never falls back silently when explicitly configured)
   //   Bun:  bun:sqlite → sql.js
   //   Node: better-sqlite3 → node:sqlite (≥22.5) → sql.js
-  let adapter = await tryBunSqlite();
+  let adapter = await tryRemoteHttp();
+  if (!adapter) adapter = await tryBunSqlite();
   if (!adapter) adapter = await tryBetterSqlite();
   if (!adapter) adapter = await tryNodeSqlite();
   if (!adapter) adapter = await trySqlJs();
   if (!adapter) throw new Error("[DB] No SQLite driver available (bun/better/node/sql.js all failed)");
 
   if (!state.logged) {
-    console.log(`[DB] Driver: ${adapter.driver} | file: ${DATA_FILE}`);
+    console.log(`[DB] Driver: ${adapter.driver}${adapter.driver.startsWith("remote-http") ? ` | store: ${process.env.FLAGSHIPROUTER_REMOTE_STORE_URL}` : ` | file: ${DATA_FILE}`}`);
     state.logged = true;
   }
 

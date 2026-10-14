@@ -1,0 +1,13 @@
+name = "flagship-store"
+main = "src/worker.js"
+compatibility_date = "2025-01-01"
+account_id = "cb18a32a7079e3809dce4f046d833eda"
+
+# Serve on https://flagship-store.ainelth708.workers.dev
+workers_dev = true
+
+# Durable SQLite database — survives instance recycles on serverless hosts.
+[[d1_databases]]
+binding = "DB"
+database_name = "flagship-store"
+database_id = "0d86375e-7ba6-4d0c-b950-147d81b23daa"
