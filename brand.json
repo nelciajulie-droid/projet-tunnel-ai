@@ -14,7 +14,7 @@
       {
         "id": "gpt-6-astra",
         "name": "GPT-6 Astra",
-        "target": "cloudflare-ai/@cf/openai/gpt-oss-120b",
+        "target": "oc/big-pickle",
         "hideTarget": true
       }
     ]
